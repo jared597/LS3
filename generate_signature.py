@@ -44,7 +44,6 @@ dr=ImageDraw.Draw(img)
 center(dr,210,10,name,font(18),(255,220,0,255),2)
 center(dr,210,31,f"Level {level} | Core: {core}",font(8),(255,255,255,255),1)
 for cx,(label,p) in zip([122,181,239,299],items):
-    center(dr,cx,59,label,font(8),(255,255,255,255),1)
     center(dr,cx,118,str(p["rank"]),font(11),(255,220,0,255),2)
     center(dr,cx,134,f"{pct(p):.1f}%",font(7),(255,255,255,255),1)
 img.convert("RGB").save(OUT,"PNG",optimize=True)
