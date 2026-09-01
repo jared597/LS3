@@ -3,47 +3,473 @@ from urllib.request import Request, urlopen
 import xml.etree.ElementTree as ET
 from PIL import Image, ImageDraw, ImageFont
 
-XML_URL="https://ladderslasher.d2jsp.org/xmlChar.php?i=473341"
-ROOT=Path(__file__).resolve().parent
-BG=ROOT/"assets/signature_background.png"
-OUT=ROOT/"signature.png"
 
-def fetch():
-    req=Request(XML_URL,headers={"User-Agent":"d2jsp-friend-signature/1.0"})
-    with urlopen(req,timeout=20) as r:return r.read()
+# ============================================================
+# CHARACTER / FILE SETTINGS
+# ============================================================
 
-def parse(raw):
-    out={}
-    for e in (raw or "").split(";"):
-        p=e.split(",")
-        if len(p)>=2:
-            try: out[int(p[0])]={"rank":int(p[1]),"progress":int(p[2]) if len(p)>=3 else 0}
-            except: pass
-    return out
+XML_URL = "https://ladderslasher.d2jsp.org/xmlChar.php?i=473341"
 
-def req(rank): return (rank+1)*1000
-def pct(x): return max(0,min((x["progress"]/req(x["rank"]))*100,100)) if req(x["rank"]) else 0
-def prof(d,i): return d.get(i,{"rank":0,"progress":0})
-def font(sz):
-    for p in ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf","/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"]:
-        if Path(p).exists(): return ImageFont.truetype(p,sz)
+OUTPUT_WIDTH = 400
+OUTPUT_HEIGHT = 150
+
+ROOT = Path(__file__).resolve().parent
+BACKGROUND_FILE = ROOT / "assets" / "signature_background.png"
+OUTPUT_FILE = ROOT / "signature.png"
+
+
+# ============================================================
+# XML
+# ============================================================
+
+def fetch_xml():
+    request = Request(
+        XML_URL,
+        headers={
+            "User-Agent": "Suzuki-d2jsp-LadderSlasher-signature/2.0"
+        }
+    )
+
+    with urlopen(request, timeout=20) as response:
+        return response.read()
+
+
+# ============================================================
+# PROFICIENCY PARSING
+# ============================================================
+
+def parse_proficiencies(raw):
+    """
+    Ladder Slasher proficiency format:
+
+        ID,RANK,PROGRESS;ID,RANK,PROGRESS;...
+
+    Example:
+
+        0,8,6300;2,7,2040;3,15,8950
+
+    Returns:
+
+        {
+            0: {"rank": 8, "progress": 6300},
+            2: {"rank": 7, "progress": 2040},
+            3: {"rank": 15, "progress": 8950}
+        }
+    """
+
+    result = {}
+
+    if not raw:
+        return result
+
+    for entry in raw.strip().split(";"):
+
+        if not entry:
+            continue
+
+        parts = [part.strip() for part in entry.split(",")]
+
+        try:
+            prof_id = int(parts[0])
+            rank = int(parts[1])
+
+            if len(parts) >= 3:
+                progress = int(parts[2])
+            else:
+                progress = 0
+
+            result[prof_id] = {
+                "rank": rank,
+                "progress": progress
+            }
+
+        except (ValueError, IndexError):
+            continue
+
+    return result
+
+
+def get_prof(data, prof_id):
+
+    return data.get(
+        prof_id,
+        {
+            "rank": 0,
+            "progress": 0
+        }
+    )
+
+
+# ============================================================
+# PROFICIENCY PERCENTAGE
+# ============================================================
+
+def requirement_for_next_rank(rank):
+    """
+    Confirmed Ladder Slasher progression:
+
+        Rank 0 -> 1 = 1000
+        Rank 1 -> 2 = 2000
+        Rank 2 -> 3 = 3000
+        Rank 3 -> 4 = 4000
+        Rank 4 -> 5 = 5000
+
+    Therefore:
+
+        Required progress = (current rank + 1) * 1000
+    """
+
+    return (rank + 1) * 1000
+
+
+def percentage_to_next_rank(rank, progress):
+
+    required = requirement_for_next_rank(rank)
+
+    if required <= 0:
+        return 0.0
+
+    percentage = (progress / required) * 100
+
+    return max(
+        0.0,
+        min(percentage, 100.0)
+    )
+
+
+# ============================================================
+# FONT HANDLING
+# ============================================================
+
+def get_font(size):
+
+    possible_fonts = [
+
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf"
+    ]
+
+    for font_path in possible_fonts:
+
+        if Path(font_path).exists():
+
+            return ImageFont.truetype(
+                font_path,
+                size=size
+            )
+
     return ImageFont.load_default()
-def center(draw,cx,y,t,f,fill,sw=0):
-    b=draw.textbbox((0,0),t,font=f,stroke_width=sw); w=b[2]-b[0]
-    draw.text((cx-w//2,y),t,font=f,fill=fill,stroke_width=sw,stroke_fill=(0,0,0,255))
 
-x=ET.fromstring(fetch())
-w=parse(x.findtext("wprof","")); s=parse(x.findtext("sprof",""))
-items=[("DAGGER",prof(w,3)),("AXE",prof(w,2)),("SWORD",prof(w,0)),("TRANSMUTING",prof(s,3))]
-name=x.findtext("name","Ladder Slasher")
-level=x.findtext("level","?")
-core="Original" if x.findtext("core","0")=="0" else "Hardcore"
 
-img=Image.open(BG).convert("RGBA").resize((400,150),Image.Resampling.LANCZOS)
-dr=ImageDraw.Draw(img)
-center(dr,210,10,name,font(18),(255,220,0,255),2)
-center(dr,210,31,f"Level {level} | Core: {core}",font(8),(255,255,255,255),1)
-for cx,(label,p) in zip([122,181,239,299],items):
-    center(dr,cx,118,str(p["rank"]),font(11),(255,220,0,255),2)
-    center(dr,cx,134,f"{pct(p):.1f}%",font(7),(255,255,255,255),1)
-img.convert("RGB").save(OUT,"PNG",optimize=True)
+# ============================================================
+# TEXT DRAWING
+# ============================================================
+
+def draw_centered_text(
+    draw,
+    center_x,
+    y,
+    text,
+    font,
+    fill,
+    stroke_width=0,
+    stroke_fill=(0, 0, 0, 255)
+):
+
+    bounding_box = draw.textbbox(
+        (0, 0),
+        text,
+        font=font,
+        stroke_width=stroke_width
+    )
+
+    text_width = (
+        bounding_box[2]
+        - bounding_box[0]
+    )
+
+    x = center_x - (text_width // 2)
+
+    draw.text(
+        (x, y),
+        text,
+        font=font,
+        fill=fill,
+        stroke_width=stroke_width,
+        stroke_fill=stroke_fill
+    )
+
+
+# ============================================================
+# MAIN SIGNATURE GENERATOR
+# ============================================================
+
+def main():
+
+    # --------------------------------------------------------
+    # Get live Ladder Slasher XML
+    # --------------------------------------------------------
+
+    raw_xml = fetch_xml()
+
+    xml = ET.fromstring(raw_xml)
+
+
+    # --------------------------------------------------------
+    # Dynamic character information
+    # --------------------------------------------------------
+
+    character_name = xml.findtext(
+        "name",
+        "Ladder Slasher"
+    )
+
+    character_level = xml.findtext(
+        "level",
+        "?"
+    )
+
+    core_value = xml.findtext(
+        "core",
+        "0"
+    )
+
+    if core_value == "0":
+        core_name = "Original"
+    else:
+        core_name = "Hardcore"
+
+
+    # --------------------------------------------------------
+    # Parse proficiency XML
+    # --------------------------------------------------------
+
+    weapon_profs = parse_proficiencies(
+        xml.findtext("wprof", "")
+    )
+
+    skill_profs = parse_proficiencies(
+        xml.findtext("sprof", "")
+    )
+
+
+    # --------------------------------------------------------
+    # Suzuki proficiency mappings
+    #
+    # These match the layout you've been using.
+    # --------------------------------------------------------
+
+    dagger = get_prof(
+        weapon_profs,
+        3
+    )
+
+    axe = get_prof(
+        weapon_profs,
+        2
+    )
+
+    sword = get_prof(
+        weapon_profs,
+        0
+    )
+
+    transmuting = get_prof(
+        skill_profs,
+        3
+    )
+
+
+    proficiencies = [
+
+        dagger,
+
+        axe,
+
+        sword,
+
+        transmuting
+    ]
+
+
+    # --------------------------------------------------------
+    # Load background
+    # --------------------------------------------------------
+
+    image = Image.open(
+        BACKGROUND_FILE
+    ).convert("RGBA")
+
+
+    image = image.resize(
+        (
+            OUTPUT_WIDTH,
+            OUTPUT_HEIGHT
+        ),
+        Image.Resampling.LANCZOS
+    )
+
+
+    draw = ImageDraw.Draw(
+        image
+    )
+
+
+    # --------------------------------------------------------
+    # Fonts
+    # --------------------------------------------------------
+
+    name_font = get_font(18)
+
+    info_font = get_font(8)
+
+    rank_font = get_font(11)
+
+    percent_font = get_font(7)
+
+
+    # --------------------------------------------------------
+    # Character Name
+    #
+    # This comes directly from:
+    # <name>Suzuki</name>
+    # --------------------------------------------------------
+
+    draw_centered_text(
+        draw,
+        210,
+        9,
+        character_name,
+        name_font,
+        fill=(255, 220, 0, 255),
+        stroke_width=2,
+        stroke_fill=(0, 0, 0, 255)
+    )
+
+
+    # --------------------------------------------------------
+    # Dynamic Level + Core
+    #
+    # Example:
+    #
+    # Level 1 | Core: Original
+    #
+    # When Suzuki reaches level 2, 10, 50, etc.,
+    # this automatically changes.
+    # --------------------------------------------------------
+
+    character_info = (
+        f"Level {character_level} | "
+        f"Core: {core_name}"
+    )
+
+    draw_centered_text(
+        draw,
+        210,
+        31,
+        character_info,
+        info_font,
+        fill=(255, 255, 255, 255),
+        stroke_width=1,
+        stroke_fill=(0, 0, 0, 255)
+    )
+
+
+    # --------------------------------------------------------
+    # Proficiency locations
+    #
+    # Background already contains:
+    #
+    # DAGGER
+    # AXE
+    # SWORD
+    # TRANSMUTING
+    #
+    # Therefore Python DOES NOT draw those labels again.
+    # --------------------------------------------------------
+
+    proficiency_centers = [
+
+        122,   # Dagger
+
+        181,   # Axe
+
+        239,   # Sword
+
+        299    # Transmuting
+    ]
+
+
+    # --------------------------------------------------------
+    # Draw live rank + percentage
+    # --------------------------------------------------------
+
+    for center_x, proficiency in zip(
+        proficiency_centers,
+        proficiencies
+    ):
+
+        rank = proficiency["rank"]
+
+        progress = proficiency["progress"]
+
+        percentage = percentage_to_next_rank(
+            rank,
+            progress
+        )
+
+
+        # ----------------------------------------------------
+        # Rank
+        # ----------------------------------------------------
+
+        draw_centered_text(
+            draw,
+            center_x,
+            118,
+            str(rank),
+            rank_font,
+            fill=(255, 220, 0, 255),
+            stroke_width=2,
+            stroke_fill=(0, 0, 0, 255)
+        )
+
+
+        # ----------------------------------------------------
+        # Progress percentage
+        # ----------------------------------------------------
+
+        percent_text = (
+            f"{percentage:.1f}%"
+        )
+
+        draw_centered_text(
+            draw,
+            center_x,
+            134,
+            percent_text,
+            percent_font,
+            fill=(255, 255, 255, 255),
+            stroke_width=1,
+            stroke_fill=(0, 0, 0, 255)
+        )
+
+
+    # --------------------------------------------------------
+    # Save finished signature
+    # --------------------------------------------------------
+
+    image.convert("RGB").save(
+        OUTPUT_FILE,
+        "PNG",
+        optimize=True
+    )
+
+
+# ============================================================
+# RUN
+# ============================================================
+
+if __name__ == "__main__":
+    main()
